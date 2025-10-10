@@ -1,16 +1,12 @@
-"""
-改进点:
-数据采样使用有放回采样 Bootstrap
-限制没棵树只考虑部分特征中的最佳分割点
-树的参数是完整训练集，无min_leaf限制
-
-"""
-
 from sklearn.model_selection import KFold
 import numpy as np
 import pandas as pd
 import time
 import sys
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+
 
 #读取数据
 data = pd.read_csv("../playground-series-s4e5/train.csv")
@@ -37,22 +33,11 @@ features.append('fsum')
 
 
 def print_progress_bar(iteration, total, prefix='', suffix='', decimals=1, length=50, fill='█'):
-    """
-    Call in a loop to create terminal progress bar
-    @params:
-        iteration   - Required  : current iteration (Int)
-        total       - Required  : total iterations (Int)
-        prefix      - Optional  : prefix string (Str)
-        suffix      - Optional  : suffix string (Str)
-        decimals    - Optional  : positive number of decimals in percent complete (Int)
-        length      - Optional  : character length of bar (Int)
-        fill        - Optional  : bar fill character (Str)
-    """
     percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
     filled_length = int(length * iteration // total)
     bar = fill * filled_length + '-' * (length - filled_length)
     sys.stdout.write('\r%s |%s| %s%% %s' % (prefix, bar, percent, suffix))
-    sys.stdout.flush()
+    sys.stdout.flush()    #刷新缓冲区，将缓冲区的内容全部输出
     if iteration == total:
         sys.stdout.write('\n')
 
@@ -72,10 +57,30 @@ def r2_score(groundtruth, prediction):
     r2 = 1 - (ss_residual / ss_total)
     return float(r2)
 
+
+def visualize_predictions(y_train_pred, y_train,y_test_pred,y_test):
+    plt.figure(figsize=(15, 10))
+
+    # 创建子图布局
+    plt.subplot(2,1, 1)
+    plt.scatter(y_train, y_train_pred, alpha=1, s=20)
+    plt.plot([min(y_train), max(y_train)], [min(y_train), max(y_train)], 'r--', lw=2)
+    plt.xlabel('True Values')
+    plt.ylabel('Predicted Values')
+    plt.grid(True, alpha=0.3)
+
+    plt.subplot(2,1, 2)
+    plt.scatter(y_test, y_test_pred, alpha=1, s=20)
+    plt.plot([min(y_test), max(y_test)], [min(y_test), max(y_test)], 'r--', lw=2)
+    plt.xlabel('True Values')
+    plt.ylabel('Predicted Values')
+    plt.grid(True, alpha=0.3)
+
+
 #k折交叉验证
 """
 model:模型
-data:数据集
+data:数据集z
 features:特征
 target:目标
 n:交叉验证次数
@@ -84,30 +89,47 @@ random_state:随机种子,确保可复现
 
 注:每次交叉验证只训练一次,测试一次
 """
-def cross_validation(model,data,features,target,n,shuffle=True,random_state = 1):
+def cross_validation(model, data, features, target, n, shuffle=True, random_state=1):
     scores = []
 
-    kf = KFold(n_splits=n,shuffle = shuffle,random_state=random_state)
+    kf = KFold(n_splits=n, shuffle=shuffle, random_state=random_state)
     print(f"\n开始{n}折交叉验证...")
-    for k,(train_idx,test_idx) in enumerate(kf.split(data)):
-        print_progress_bar(k+1, n, prefix=f'交叉验证进度:', suffix=f'第{k+1}/{n}折', length=30)
+    for k, (train_idx, test_idx) in enumerate(kf.split(data)):
+        print_progress_bar(k + 1, n, prefix=f'交叉验证进度:', suffix=f'第{k + 1}/{n}折', length=30)
 
         x_train = data.iloc[train_idx][features]
         y_train = data.iloc[train_idx][target]
         x_test = data.iloc[test_idx][features]
         y_test = data.iloc[test_idx][target]
 
-        print(f"  训练第{k+1}折模型...")
-        model.fit(x_train,y_train)
-        print(f"  预测第{k+1}折验证集...")
-        y_pred = model.predict(x_test)
+        print(f"  训练第{k + 1}折模型...")
+        model.fit(x_train, y_train)
+        print(f"  预测第{k + 1}折验证集...")
 
-        score = r2_score(y_test,y_pred)
+        y_train_pred = model.predict(x_train)  # 对训练集进行预测
+        y_test_pred = model.predict(x_test)    # 对测试集进行预测
+
+        score = r2_score(y_test, y_test_pred)
         scores.append(score)
-        print(f"  第{k+1}折R²分数: {score:.4f}")
+        print(f"  第{k + 1}折R²分数: {score:.4f}")
+
+        if k + 1 == 5:
+            print(f"\n正在生成预测结果可视化图表...")
+
+            idxs_train = np.random.choice(len(x_train), 1000, replace=True)
+            idxs_test = np.random.choice(len(x_test), 1000, replace=True)
 
 
-    return scores,sum(scores)/len(scores)
+            y_train_vis = y_train.iloc[idxs_train]
+            y_train_pred_vis = y_train_pred[idxs_train]  # 对应训练集的预测值
+
+            y_test_vis = y_test.iloc[idxs_test]
+            y_test_pred_vis = y_test_pred[idxs_test]    # 对应测试集的预测值
+
+            visualize_predictions(np.array(y_train_pred_vis), np.array(y_train_vis),
+                                  np.array(y_test_pred_vis), np.array(y_test_vis))
+
+    return scores, sum(scores) / len(scores)
 
 class RandomForest(object):
     def __init__(self, nr_trees=100, sample_sz=None, max_features='sqrt', min_leaf=5, max_depth=None, random_state=None):
@@ -152,6 +174,7 @@ class DecesionTree(object):
         self.max_features = max_features
         self.current_depth = current_depth
         self.score = float('inf')
+        
     def fit(self,x,y):
         self.x = x
         self.y = y
@@ -160,7 +183,6 @@ class DecesionTree(object):
         self.val = np.mean(y)
         self.find_best_split()
         return self
-
 
     def find_best_split(self):
         # 特征随机选择
@@ -205,9 +227,6 @@ class DecesionTree(object):
             print(f"Warning: Failed to create child nodes: {e}")
             return
 
-
-
-
     def find_col_best_split_point(self,col_idx):
         x_col = self.x.values[:,col_idx]
         sorted_idxs = np.argsort(x_col)
@@ -247,7 +266,6 @@ class DecesionTree(object):
                 self.score = split_score
                 self.split_point = xi
                 self.split_col_idx = col_idx
-
 
     def calc_mse_inpurity(self,y_squared_sum,y_sum,n_y):
         return (y_squared_sum / n_y) - (y_sum / n_y) ** 2
@@ -301,6 +319,7 @@ def main():
     print(f"目标变量: {target}")
     model = RandomForest(nr_trees=100, sample_sz=20000, max_features='sqrt',
                         min_leaf=30, max_depth=15, random_state=42)
+    # 设置visualize=True来启用可视化功能
     scores, avg_score = cross_validation(model, data, features, target, n=5, random_state=42)
     print(f"\n交叉验证结果:")
     print(f"   各折R²分数: {[f'{score:.4f}' for score in scores]}")
